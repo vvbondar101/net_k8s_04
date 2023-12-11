@@ -1,0 +1,164 @@
+---
+# sudo kubeadm init --pod-network-cidr=10.244.0.0/16 --control-plane-endpoint 10.0.1.26:7443 --upload-certs
+# sudo kubeadm init --pod-network-cidr=192.168.0.0/16 --apiserver-advertise-address=10.0.1.23 --apiserver-cert-extra-sans=51.250.85.230
+
+# https://docs.tigera.io/calico/latest/getting-started/kubernetes/quickstart
+# kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.4/manifests/tigera-operator.yaml
+# kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.4/manifests/custom-resources.yaml
+
+- name: Ensure dependencies are installed.
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gpg
+    state: present
+    update_cache: yes
+  become: true
+
+# - name: Add Kubernetes apt key.
+#   apt_key:
+#     url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+  # become: true
+
+  # - name: Add Kubernetes repository.
+  # apt_repository:
+  #   repo: deb http://apt.kubernetes.io/ kubernetes-xenial main
+  #   state: present
+  #   update_cache: true
+  # become: true
+- name: Disable swap for current session
+  command: swapoff -a
+  become: true
+
+- name: remove swap file
+  mount:
+    name: swap
+    fstype: swap
+    state: absent
+  become: true
+
+- name: Disable swap permanently, persist reboots
+  replace:
+    path: /etc/fstab
+    regexp: '^(\s*)([^#\n]+\s+)(\w+\s+)swap(\s+.*)$'
+    replace: '#\1\2\3swap\4'
+    backup: yes
+  become: true
+
+- name: сreate directory for apt key
+  file:
+    path=/etc/apt/keyrings
+    mode=0755
+    owner=root
+    group=root
+    state=directory
+  become: true
+
+- name: Add Kubernetes apt key.
+  apt_key:
+    url: https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key
+    keyring: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  become: true
+
+- name: Add Kubernetes repository.
+  apt_repository:
+    repo: 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.28/deb/ /'
+    state: present
+    update_cache: true
+  become: true
+
+# - name: Add containerd apt key.
+#   apt_key:
+#     url: https://download.docker.com/linux/ubuntu/gpg
+#     keyring: /usr/share/keyrings/docker-archive-keyring.gpg
+#   become: true
+
+# - name: Add containerd repository.
+#   apt_repository:
+#     repo: "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+#     state: present
+#     update_cache: true
+#   become: true
+
+# - name: Add Kubernetes apt preferences file to pin a version.
+#   template:
+#     src: apt-preferences-kubernetes.j2
+#     dest: /etc/apt/preferences.d/kubernetes
+#     mode: 0644
+#   become: true
+
+- name: Install kubelet kubeadm kubectl containerd
+  apt:
+    name:
+      - kubelet
+      - kubeadm
+      - kubectl
+      - containerd
+    state: present
+    update_cache: yes
+  become: true
+
+- name: Remove containerd config.toml 
+  when: ansible_facts['os_family'] == "RedHat"
+  file:
+    path: /etc/containerd/config.toml
+    state: absent
+  become: true
+
+
+- name: Containerd
+  service:
+    name: containerd
+    state: started
+    enabled: yes
+  become: true
+
+- name: Set crictl.yaml
+  copy: 
+    src: crictl.yaml
+    dest: /etc/crictl.yaml
+    owner: root
+    mode: 644
+  become: true
+
+- name: Load modules
+  modprobe:
+    name: br_netfilter
+  become: true
+
+- name: Set Sysctl on all nodes
+  sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    state: present
+  with_items:
+    - name: net.ipv4.ip_forward
+      value: 1
+    - name: net.bridge.bridge-nf-call-iptables
+      value: 1
+    - name: net.bridge.bridge-nf-call-arptables
+      value: 1
+    - name: net.bridge.bridge-nf-call-ip6tables
+      value: 1
+  become: true
+
+
+- name: Set Sysctl on master node(s)
+#  when: inventory_hostname in groups['k8s_masters']
+  sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    state: present
+  with_items:
+    - name: net.ipv4.ip_nonlocal_bind
+      value: 1
+  become: true
+
+- name: Load module permanet
+  copy:
+    src: modules-kubernetes.conf
+    dest: /etc/modules-load.d/modules-kubernetes.conf
+  become: true
+  

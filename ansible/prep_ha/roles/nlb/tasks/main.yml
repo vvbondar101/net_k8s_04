@@ -1,0 +1,44 @@
+---
+- name: Set sysctl
+  become: true
+  sysctl:
+    name: "net.ipv4.ip_nonlocal_bind"
+    value: "1"
+    sysctl_set: yes
+    state: present
+    ignoreerrors: yes
+
+- name: Install packages 
+  # when: ansible_os_family == "RedHat"
+  apt:
+    name:
+      - haproxy
+    state: present
+  become: true
+
+#- name: Install packages Debian
+#  when: ansible_os_family == "Debian"
+
+
+- name: Copy haproxy haproxy.cfg
+  template:
+    src: haproxy.j2
+    dest: /etc/haproxy/haproxy.cfg
+  register: haproxy_conf
+  become: true
+
+- name: Enable keepalived and haproxy
+  become: true
+  service:
+    name: "{{ item }}"
+    state: started
+    enabled: yes
+  with_items:
+    - haproxy
+
+- name: Restart haproxy
+  become: true
+  service:
+    name: haproxy
+    state: restarted
+  when: haproxy_conf.changed
